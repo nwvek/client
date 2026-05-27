@@ -1,14 +1,9 @@
 <div align="center">
 
-# oyvey-ported
-Kosher client base ported to modern Minecraft by [@cattyngmd](https://github.com/cattyngmd)
+# 1
 
+# 2
 
-
-# Why
-
-
-# What
-
+# 3
 
 </div>
