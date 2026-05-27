@@ -34,7 +34,7 @@ public class Automace extends Module {
 
         switch (state) {
             case IDLE -> {
-                startY = mc.player.getY();
+                startY = mc.player.getValueY();
                 state = State.RISE;
             }
 
@@ -50,10 +50,10 @@ public class Automace extends Module {
     // RISE: instant vertical climb
     // ────────────────────────────────
     private void rise() {
-        double targetY = target.getY() + riseHeight.get();
+        double targetY = target.getValueY() + riseHeight.getValue();
 
-        if (mc.player.getY() < targetY) {
-            mc.player.setVelocity(0, speed.get(), 0);
+        if (mc.player.getValueY() < targetY) {
+            mc.player.setVelocityClient(0, speed.getValue(), 0);
             mc.player.fallDistance = 0;
         } else {
             state = State.ALIGN;
@@ -64,18 +64,18 @@ public class Automace extends Module {
     // ALIGN: instant horizontal positioning
     // ────────────────────────────────
     private void align() {
-        Vec3d pos = mc.player.getPos();
-        Vec3d tpos = target.getPos();
+        Vec3d pos = mc.player.getValuePos();
+        Vec3d tpos = target.getValuePos();
 
         Vec3d diff = new Vec3d(tpos.x - pos.x, 0, tpos.z - pos.z);
         double dist = diff.length();
 
         if (dist > 0.6) {
             Vec3d dir = diff.normalize();
-            mc.player.setVelocity(dir.x * speed.get(), 0, dir.z * speed.get());
+            mc.player.setVelocityClient(dir.x * speed.getValue(), 0, dir.z * speed.getValue());
             mc.player.fallDistance = 0;
         } else {
-            startY = mc.player.getY();
+            startY = mc.player.getValueY();
             state = State.DIVE;
         }
     }
@@ -84,17 +84,17 @@ public class Automace extends Module {
     // DIVE: let gravity + optional assist
     // ────────────────────────────────
     private void dive() {
-        Vec3d pos = mc.player.getPos();
-        Vec3d tpos = target.getPos();
+        Vec3d pos = mc.player.getValuePos();
+        Vec3d tpos = target.getValuePos();
 
-        if (autoDive.get()) {
+        if (autoDive.getValue()) {
             Vec3d dir = new Vec3d(tpos.x - pos.x, 0, tpos.z - pos.z).normalize();
-            mc.player.setVelocity(dir.x * speed.get(), -2.8, dir.z * speed.get());
+            mc.player.setVelocityClient(dir.x * speed.getValue(), -2.8, dir.z * speed.getValue());
         } else {
-            mc.player.setVelocity(0, -2.8, 0);
+            mc.player.setVelocityClient(0, -2.8, 0);
         }
 
-        mc.player.fallDistance = (float) (startY - mc.player.getY());
+        mc.player.fallDistance = (float) (startY - mc.player.getValueY());
 
         if (mc.player.distanceTo(target) < 3.5) {
             state = State.IDLE;
@@ -103,11 +103,11 @@ public class Automace extends Module {
 
     // ────────────────────────────────
     private PlayerEntity getTarget() {
-        List<PlayerEntity> list = mc.world.getPlayers().stream()
+        List<PlayerEntity> list = mc.world.getValuePlayers().stream()
             .filter(p -> p != mc.player && p.isAlive())
             .sorted(Comparator.comparingDouble(p -> p.distanceTo(mc.player)))
             .toList();
 
-        return list.isEmpty() ? null : list.get(0);
+        return list.isEmpty() ? null : list.getValue(0);
     }
 }      
