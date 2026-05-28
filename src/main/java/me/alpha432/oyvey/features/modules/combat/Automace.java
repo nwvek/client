@@ -50,7 +50,7 @@ public class Automace extends Module {
     // RISE: instant vertical climb
     // ────────────────────────────────
     private void rise() {
-        double targetY = target.getValueY() + riseHeight.getValue();
+        double targetY = target.getY() + riseHeight.getValue();
 
         if (mc.player.getY() < targetY) {
             mc.player.setDeltaMovement(0, speed.getValue(), 0);
@@ -103,11 +103,11 @@ public class Automace extends Module {
 
     // ────────────────────────────────
     private Player getTarget() {
-        List<Player> list = mc.level.players().stream()
+        List<AbstractClientPlayer> list = mc.level.players().stream()
             .filter(p -> p != mc.player && p.isAlive())
             .sorted(Comparator.comparingDouble(p -> p.distanceTo(mc.player)))
             .toList();
 
-        return list.isEmpty() ? null : list.getValue(0);
+        return list.isEmpty() ? null : list.get(0);
     }
 }      
