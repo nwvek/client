@@ -256,7 +256,7 @@ public class Automace extends Module {
         int level = getDensityFromStack(mainHand);
         if (level >= 0) return level;
 
-        for (int i = 0; i < mc.player.getInventory().size(); i++) {     ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().main.size(); i++) {     ItemStack stack = mc.player.getInventory().main.get(i);
             level = getDensityFromStack(stack);
             if (level >= 0) return level;
         }
