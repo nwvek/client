@@ -3,50 +3,58 @@ package me.alpha432.oyvey.features.modules.combat;
 import me.alpha432.oyvey.features.modules.Module;
 import me.alpha432.oyvey.features.settings.Setting;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemEnchantments;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.client.player.AbstractClientPlayer;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
 public class Automace extends Module {
 
-    private final Setting<Float>   speed       = num("Speed",        2.5f, 0.1f, 10f);
-    private final Setting<Float> densityLevel = num("Density", 5f, 0f, 5f);
-    private final Setting<Boolean> autoDive    = bool("AutoDive",    true);
+    // Speed: 1 = 20 bps, 3 = 60 bps, 5 = 100 bps (linear: bps = level * 20)
+    // Minecraft runs at 20 ticks/sec, so blocks-per-tick = bps / 20
+    // e.g. level 3 → 60 bps → 3 blocks/tick
+    private final Setting<Float> speedLevel = num("Speed", 3f, 1f, 5f);
+    private final Setting<Boolean> autoDive = bool("AutoDive", true);
 
-    // ── States ──────────────────────────────────────────────────────────────
     private enum State { IDLE, JUMP, WAIT_JUMP, RISE, ALIGN, PATHFIND, DIVE }
-    private State  state          = State.IDLE;
+    private State  state         = State.IDLE;
     private Player target;
-    private double startY;           // Y when dive began
-    private double targetRiseY;      // computed ceiling for this dive cycle
-    private int    waitTicks       = 0;
-    private Vec3   pathWaypoint    = null; // intermediate point when blocked
+    private double startY;
+    private double targetRiseY;
+    private int    waitTicks     = 0;
+    private Vec3   pathWaypoint  = null;
 
     public Automace() {
-        super("Automace", "Auto-height mace dive with pathfinding", Category.COMBAT);
+        super("Automace", "Auto-height mace dive", Category.COMBAT);
     }
 
-    // ── Lifecycle ────────────────────────────────────────────────────────────
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
     @Override
     public void onDisable() {
         resetState();
     }
 
     private void resetState() {
-        state       = State.IDLE;
-        target      = null;
-        waitTicks   = 0;
+        state        = State.IDLE;
+        target       = null;
+        waitTicks    = 0;
         pathWaypoint = null;
     }
 
-    // ── Main tick ────────────────────────────────────────────────────────────
+    // ── Speed helper ──────────────────────────────────────────────────────────
+    // Returns blocks-per-tick from the 1-5 speed level setting
+    private double bpt() {
+        return (speedLevel.getValue() * 20.0) / 20.0; // level * 20 bps / 20tps
+    }
+
+    // ── Main tick ─────────────────────────────────────────────────────────────
     @Override
     public void onTick() {
         if (nullCheck()) return;
@@ -54,7 +62,7 @@ public class Automace extends Module {
         target = getTarget();
         if (target == null) { resetState(); return; }
 
-        // Ground recovery — only when we shouldn't be grounded
+        // Ground recovery while mid-sequence
         if (mc.player.onGround()
                 && state != State.IDLE
                 && state != State.JUMP
@@ -76,8 +84,9 @@ public class Automace extends Module {
         }
     }
 
-    // ── JUMP ─────────────────────────────────────────────────────────────────
+    // ── JUMP ──────────────────────────────────────────────────────────────────
     private void beginJump() {
+        // Hard-zero all motion before jumping to prevent rubber-band
         mc.player.setDeltaMovement(0, 0, 0);
         pathWaypoint = null;
         state        = State.JUMP;
@@ -89,26 +98,33 @@ public class Automace extends Module {
             mc.player.setDeltaMovement(0, 0, 0);
             mc.player.jumpFromGround();
             state     = State.WAIT_JUMP;
-            waitTicks = 5;
+            waitTicks = 6; // wait 6 ticks — enough for jump velocity to register
+        }
+        // Not on ground yet (just landed and still bouncing): wait 1 tick
+        else {
+            waitTicks = 1;
         }
     }
 
     private void doWaitJump() {
+        // waitTicks counted down by main tick guard; reach here when it hits 0
         if (!mc.player.onGround()) {
             targetRiseY = computeRequiredRiseY();
-            startY      = mc.player.getY();
             state       = State.RISE;
-        } else if (waitTicks == 0) {
-            state = State.JUMP; // retry
+        } else {
+            // Still on ground (low ceiling etc.) — retry
+            state     = State.JUMP;
+            waitTicks = 2;
         }
     }
 
-    // ── RISE ─────────────────────────────────────────────────────────────────
+    // ── RISE ──────────────────────────────────────────────────────────────────
     private void doRise() {
         if (mc.player.getY() < targetRiseY) {
-            mc.player.setDeltaMovement(0, speed.getValue(), 0);
+            mc.player.setDeltaMovement(0, bpt(), 0);
             mc.player.fallDistance = 0;
         } else {
+            mc.player.setDeltaMovement(0, 0, 0);
             state = State.ALIGN;
         }
     }
@@ -123,27 +139,19 @@ public class Automace extends Module {
 
         mc.player.fallDistance = 0;
 
-        if (dist > 0.6) {
-            // Check if there is a solid block between us and the target at our Y
+        if (dist > 0.5) {
             if (isPathBlockedHorizontal(pos, tpos)) {
-                // Try to find a waypoint around the obstacle
                 Vec3 wp = findHorizontalWaypoint(pos, tpos);
                 if (wp != null) {
                     pathWaypoint = wp;
                     state = State.PATHFIND;
                     return;
                 }
-                // Can't pathfind — hold altitude and wait for target to move
-                mc.player.setDeltaMovement(0, 0.08, 0);
+                // Nowhere to go — hover and wait
+                mc.player.setDeltaMovement(0, 0.05, 0);
                 return;
             }
-
-            double len = dist;
-            mc.player.setDeltaMovement(
-                (dx / len) * speed.getValue(),
-                0.08,
-                (dz / len) * speed.getValue()
-            );
+            mc.player.setDeltaMovement((dx / dist) * bpt(), 0.05, (dz / dist) * bpt());
         } else {
             startY = mc.player.getY();
             mc.player.setDeltaMovement(0, 0, 0);
@@ -151,8 +159,7 @@ public class Automace extends Module {
         }
     }
 
-    // ── PATHFIND ─────────────────────────────────────────────────────────────
-    // Move toward the intermediate waypoint, then return to ALIGN
+    // ── PATHFIND ──────────────────────────────────────────────────────────────
     private void doPathfind() {
         if (pathWaypoint == null) { state = State.ALIGN; return; }
 
@@ -163,20 +170,15 @@ public class Automace extends Module {
 
         mc.player.fallDistance = 0;
 
-        if (dist > 0.8) {
-            mc.player.setDeltaMovement(
-                (dx / dist) * speed.getValue(),
-                0.08,
-                (dz / dist) * speed.getValue()
-            );
+        if (dist > 0.5) {
+            mc.player.setDeltaMovement((dx / dist) * bpt(), 0.05, (dz / dist) * bpt());
         } else {
-            // Reached waypoint — back to ALIGN
             pathWaypoint = null;
             state = State.ALIGN;
         }
     }
 
-    // ── DIVE ─────────────────────────────────────────────────────────────────
+    // ── DIVE ──────────────────────────────────────────────────────────────────
     private void doDive() {
         Vec3   pos  = mc.player.position();
         Vec3   tpos = target.position();
@@ -188,167 +190,151 @@ public class Automace extends Module {
 
         if (autoDive.getValue()) {
             double len = Math.sqrt(dx * dx + dz * dz);
-            double cx  = len > 0.01 ? (dx / len) * 0.4 : 0;
-            double cz  = len > 0.01 ? (dz / len) * 0.4 : 0;
-            mc.player.setDeltaMovement(cx, -speed.getValue(), cz);
+            double cx  = len > 0.01 ? (dx / len) * 0.3 : 0;
+            double cz  = len > 0.01 ? (dz / len) * 0.3 : 0;
+            mc.player.setDeltaMovement(cx, -bpt(), cz);
         }
 
-        // Hit window passed — relaunch
         if (mc.player.getY() <= target.getY() + 0.5) {
             beginJump();
         }
     }
 
-    // ── HEIGHT CALCULATOR ────────────────────────────────────────────────────
+    // ── HEIGHT CALCULATOR ─────────────────────────────────────────────────────
     /**
-     * Mace smash damage formula (vanilla Java, no crit multiplier applied here
-     * since we assume a crit is almost guaranteed):
-     *   base  = 6
-     *   bonus = first 3 blocks → 4 dmg each  (total 12 at h=3)
-     *           next  5 blocks → 2 dmg each  (total 10 at h=8)
-     *           remaining      → 1 dmg each
-     *   density bonus = densityLevel * 0.5 * blocksfallen  (additional per block)
-     *   critical multiplier = ×1.5
+     * Exact formula from wiki:
+     *   fallBonus  = first 3 blocks: 4 dmg each
+     *                next  5 blocks: 2 dmg each
+     *                remaining     : 1 dmg each
+     *   densityBonus = densityLevel * 0.5 * blocksfallen
+     *   totalDmg = (6 + fallBonus + densityBonus) * 1.5  [critical]
      *
-     * We solve for the height that produces (targetMaxHp + 10) damage.
+     * We solve for height such that totalDmg >= targetMaxHp + 10.
+     * Density level is read from the mace in the player's hand / inventory.
      */
     private double computeRequiredRiseY() {
         float  hp      = target.getMaxHealth();
-        double needed  = hp + 10.0;          // overkill buffer
-        int    density = densityLevel.getValue().intValue();
-
-        double blocks = blocksNeededForDamage(needed, density);
-
-        // Cap at 100 blocks to avoid absurd heights, add target Y as base
-        double desiredAbsolute = target.getY() + Math.min(blocks, 100);
-
-        // Roof check — find the actual reachable ceiling above the player
-        return findReachableCeiling(desiredAbsolute);
+        double needed  = hp + 10.0;
+        int    density = getMaceDensityLevel();
+        double blocks  = blocksForDamage(needed, density);
+        // cap at 80 blocks, never less than 3
+        blocks = Math.max(3, Math.min(blocks, 80));
+        return findReachableCeiling(target.getY() + blocks);
     }
 
-    /**
-     * Invert the mace damage formula to get required fall height in blocks.
-     */
-    private double blocksNeededForDamage(double targetDmg, int density) {
-        // base damage before any fall
-        double dmg = 6.0;
-        // density per-block bonus
+    private double blocksForDamage(double targetDmg, int density) {
+        // Invert: targetDmg = (6 + fallBonus + densityBonus) * 1.5
+        double required = (targetDmg / 1.5) - 6.0;
+        if (required <= 0) return 2.0;
+
         double densityPerBlock = density * 0.5;
-        // critical multiplier baked into the target damage estimate
-        // We want: (base + fallBonus) * 1.5 >= targetDmg
-        // so fallBonus >= targetDmg/1.5 - base
-        double fallBonus = (targetDmg / 1.5) - dmg;
-        if (fallBonus <= 0) return 2.0; // already enough with crit alone
+        double phase1 = 4.0 + densityPerBlock; // per block, first 3
+        double phase2 = 2.0 + densityPerBlock; // per block, next 5
+        double phase3 = 1.0 + densityPerBlock; // per block, rest
 
-        // First 3 blocks give 4 dmg each + density bonus
-        double perBlock0 = 4.0 + densityPerBlock;
-        // Next 5 blocks give 2 dmg each + density bonus
-        double perBlock1 = 2.0 + densityPerBlock;
-        // Remaining give 1 dmg each + density bonus
-        double perBlock2 = 1.0 + densityPerBlock;
+        double accum = 0, blocks = 0;
 
-        double accum  = 0;
-        double blocks = 0;
+        for (int i = 0; i < 3 && accum < required; i++) { accum += phase1; blocks++; }
+        if (accum >= required) return blocks;
 
-        // Phase 1: blocks 1–3
-        for (int i = 0; i < 3 && accum < fallBonus; i++) {
-            accum  += perBlock0;
-            blocks += 1;
-        }
-        if (accum >= fallBonus) return blocks;
+        for (int i = 0; i < 5 && accum < required; i++) { accum += phase2; blocks++; }
+        if (accum >= required) return blocks;
 
-        // Phase 2: blocks 4–8
-        for (int i = 0; i < 5 && accum < fallBonus; i++) {
-            accum  += perBlock1;
-            blocks += 1;
-        }
-        if (accum >= fallBonus) return blocks;
-
-        // Phase 3: remaining
-        double remaining = fallBonus - accum;
-        blocks += Math.ceil(remaining / perBlock2);
+        double rem = required - accum;
+        blocks += Math.ceil(rem / phase3);
         return blocks;
     }
 
-    // ── ROOF / CEILING SCAN ──────────────────────────────────────────────────
+    // ── ENCHANTMENT READER ────────────────────────────────────────────────────
     /**
-     * Walk upward from the player toward desiredY.
-     * Returns the highest Y the player can actually reach (≥2 consecutive air).
-     * If a solid block is found with a ≥2-air gap before it, the scan continues
-     * through the gap (opening in the roof).
+     * Finds the mace in the player's hotbar + off-hand and reads Density level.
+     * Uses DataComponents (1.20.5+ / 1.21 Fabric API).
      */
-    private double findReachableCeiling(double desiredY) {
-        double px = mc.player.getX();
-        double pz = mc.player.getZ();
-        int from  = (int) Math.ceil(mc.player.getY()) + 1;
-        int to    = (int) Math.ceil(desiredY);
+    private int getMaceDensityLevel() {
+        // Check main hand first, then full inventory
+        ItemStack mainHand = mc.player.getMainHandItem();
+        int level = getDensityFromStack(mainHand);
+        if (level >= 0) return level;
 
-        int    consecutiveAir = 0;
-        double lastOpenY      = mc.player.getY();
+        for (ItemStack stack : mc.player.getInventory().items) {
+            level = getDensityFromStack(stack);
+            if (level >= 0) return level;
+        }
+        return 0; // no mace found, no density
+    }
+
+    private int getDensityFromStack(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return -1;
+        // Check if it's a mace by item id
+        if (!stack.getItem().toString().contains("mace")) return -1;
+
+        ItemEnchantments enchantments = stack.get(DataComponents.ENCHANTMENTS);
+        if (enchantments == null) return 0;
+
+        // Iterate all enchantments and find Density by registry key name
+        for (var entry : enchantments.entrySet()) {
+            String key = entry.getKey().getRegisteredName();
+            if (key.contains("density")) {
+                return entry.getIntValue();
+            }
+        }
+        return 0;
+    }
+
+    // ── ROOF SCAN ─────────────────────────────────────────────────────────────
+    private double findReachableCeiling(double desiredY) {
+        double px   = mc.player.getX();
+        double pz   = mc.player.getZ();
+        int    from = (int) Math.ceil(mc.player.getY()) + 1;
+        int    to   = (int) Math.ceil(desiredY);
+
+        int    consAir  = 0;
 
         for (int y = from; y <= to; y++) {
             BlockState bs = mc.level.getBlockState(new BlockPos((int) px, y, (int) pz));
             if (bs.isAir()) {
-                consecutiveAir++;
-                if (consecutiveAir >= 2) lastOpenY = y;
+                consAir++;
+                if (consAir >= 2 && y >= to) return desiredY;
             } else {
-                if (consecutiveAir < 2) {
-                    // Solid with no passable gap — cap 2 below obstruction
-                    return Math.max(mc.player.getY(), y - 2);
-                }
-                consecutiveAir = 0; // reset after solid after an opening
+                if (consAir < 2) return Math.max(mc.player.getY(), y - 2);
+                consAir = 0;
             }
         }
         return desiredY;
     }
 
-    // ── HORIZONTAL PATHFINDING ───────────────────────────────────────────────
-    /**
-     * Check if there is a solid block at player height between pos and tpos.
-     */
+    // ── HORIZONTAL PATHFINDING ────────────────────────────────────────────────
     private boolean isPathBlockedHorizontal(Vec3 pos, Vec3 tpos) {
         int steps = (int) Math.ceil(pos.distanceTo(tpos));
         if (steps < 1) return false;
         for (int i = 1; i <= steps; i++) {
             double t  = (double) i / steps;
-            double ix = pos.x + (tpos.x - pos.x) * t;
-            double iz = pos.z + (tpos.z - pos.z) * t;
-            int    iy = (int) Math.floor(pos.y);
-            // check 2-block tall corridor
-            BlockState b1 = mc.level.getBlockState(new BlockPos((int) Math.floor(ix), iy,     (int) Math.floor(iz)));
-            BlockState b2 = mc.level.getBlockState(new BlockPos((int) Math.floor(ix), iy + 1, (int) Math.floor(iz)));
-            if (!b1.isAir() || !b2.isAir()) return true;
+            int    bx = (int) Math.floor(pos.x + (tpos.x - pos.x) * t);
+            int    by = (int) Math.floor(pos.y);
+            int    bz = (int) Math.floor(pos.z + (tpos.z - pos.z) * t);
+            if (!mc.level.getBlockState(new BlockPos(bx, by,     bz)).isAir()) return true;
+            if (!mc.level.getBlockState(new BlockPos(bx, by + 1, bz)).isAir()) return true;
         }
         return false;
     }
 
-    /**
-     * Try 8 cardinal + diagonal offset waypoints at ±5 blocks to find
-     * a clear corridor around the obstacle.
-     */
     private Vec3 findHorizontalWaypoint(Vec3 pos, Vec3 tpos) {
-        double[] offsets = { -5, 0, 5 };
+        double[] offsets = { -5, -3, 3, 5 };
         Vec3 best = null;
         double bestDist = Double.MAX_VALUE;
-
         for (double ox : offsets) {
             for (double oz : offsets) {
-                if (ox == 0 && oz == 0) continue;
-                Vec3 candidate = new Vec3(pos.x + ox, pos.y, pos.z + oz);
-                if (!isPathBlockedHorizontal(pos, candidate)
-                        && !isPathBlockedHorizontal(candidate, tpos)) {
-                    double d = candidate.distanceTo(tpos);
-                    if (d < bestDist) {
-                        bestDist = d;
-                        best     = candidate;
-                    }
+                Vec3 cand = new Vec3(pos.x + ox, pos.y, pos.z + oz);
+                if (!isPathBlockedHorizontal(pos, cand) && !isPathBlockedHorizontal(cand, tpos)) {
+                    double d = cand.distanceTo(tpos);
+                    if (d < bestDist) { bestDist = d; best = cand; }
                 }
             }
         }
         return best;
     }
 
-    // ── TARGET ───────────────────────────────────────────────────────────────
+    // ── TARGET ────────────────────────────────────────────────────────────────
     private Player getTarget() {
         List<AbstractClientPlayer> players = mc.level.players();
         return players.stream()
