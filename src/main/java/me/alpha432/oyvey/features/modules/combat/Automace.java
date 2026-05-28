@@ -6,8 +6,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.component.type.ItemEnchantmentsComponent;
-import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.client.player.AbstractClientPlayer;
@@ -247,16 +246,19 @@ public class Automace extends Module {
 
     // ── ENCHANTMENT READER ────────────────────────────────────────────────────
     /**
-     * Finds the mace in the player's hotbar + off-hand and reads Density level.
-     * Uses DataComponents (1.20.5+ / 1.21 Fabric API).
+     * Finds the mace in the player's hotbar + inventory and reads Density level.
+     * Uses DataComponents (1.20.5+ / 1.21 NeoForge/Forge API).
      */
     private int getMaceDensityLevel() {
-        // Check main hand first, then full inventory
+        // Check main hand first
         ItemStack mainHand = mc.player.getMainHandItem();
         int level = getDensityFromStack(mainHand);
         if (level >= 0) return level;
 
-        for (int i = 0; i < mc.player.getInventory().main.size(); i++) {     ItemStack stack = mc.player.getInventory().main.get(i);
+        // FIX: use getInventory().getItem(i) instead of .main.get(i)
+        // Slots 0-35 cover the full player inventory (hotbar + main)
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             level = getDensityFromStack(stack);
             if (level >= 0) return level;
         }
@@ -268,7 +270,9 @@ public class Automace extends Module {
         // Check if it's a mace by item id
         if (!stack.getItem().toString().contains("mace")) return -1;
 
-        ItemEnchantmentsComponent enchantments = stack.get(DataComponents.ENCHANTMENTS);
+        // FIX: use ItemEnchantments (Forge/NeoForge 1.21+) instead of
+        // ItemEnchantmentsComponent (Fabric-only class that doesn't exist here)
+        ItemEnchantments enchantments = stack.get(DataComponents.ENCHANTMENTS);
         if (enchantments == null) return 0;
 
         // Iterate all enchantments and find Density by registry key name
