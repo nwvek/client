@@ -5,6 +5,7 @@ import me.alpha432.oyvey.features.settings.Setting;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.client.player.AbstractClientPlayer;
 
 import java.util.Comparator;
 import java.util.List;
