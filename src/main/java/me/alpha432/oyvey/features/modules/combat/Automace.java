@@ -130,3 +130,17 @@ public class Automace extends Module {
                     (dz / len) * 0.5
                 );
             } else {
+                // Directly on target, fall straight down
+                mc.player.setDeltaMovement(0, -2.8, 0);
+            }
+        }
+    }
+
+    private Player getTarget() {
+        List<AbstractClientPlayer> players = mc.level.players();
+        return players.stream()
+            .filter(p -> p != mc.player)
+            .min(Comparator.comparingDouble(p -> p.distanceTo(mc.player)))
+            .orElse(null);
+    }
+}
