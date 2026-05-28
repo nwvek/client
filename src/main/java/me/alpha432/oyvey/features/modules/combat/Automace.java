@@ -184,64 +184,74 @@ public class Automace extends Module {
         double dx   = tpos.x - pos.x;
         double dz   = tpos.z - pos.z;
 
+        // Force fallDistance to true blocks-fallen every tick.
+        // The engine resets it on upward motion, so we overwrite manually.
+        // startY is recorded at the moment we enter DIVE state.
         double fallen = startY - mc.player.getY();
         if (fallen > 0) mc.player.fallDistance = (float) fallen;
 
-        if (autoDive.getValue()) {
-            double len = Math.sqrt(dx * dx + dz * dz);
-            double cx  = len > 0.01 ? (dx / len) * 0.3 : 0;
-            double cz  = len > 0.01 ? (dz / len) * 0.3 : 0;
-            mc.player.setDeltaMovement(cx, -bpt(), cz);
-        }
+        // Steer toward target while diving at full bpt() downward speed
+        double len = Math.sqrt(dx * dx + dz * dz);
+        double cx  = len > 0.01 ? (dx / len) * 0.3 : 0;
+        double cz  = len > 0.01 ? (dz / len) * 0.3 : 0;
+        mc.player.setDeltaMovement(cx, -bpt(), cz);
 
-        if (mc.player.getY() <= target.getY() + 0.5) {
+        // Attack window: within 2 blocks above target vertically.
+        // Don't wait until +0.5 — that's too late; hit registers before landing.
+        if (mc.player.getY() <= target.getY() + 2.0) {
+            mc.gameMode.attack(mc.player, target);
             beginJump();
         }
     }
 
     // ── HEIGHT CALCULATOR ─────────────────────────────────────────────────────
     /**
-     * Exact formula from wiki:
-     *   fallBonus  = first 3 blocks: 4 dmg each
-     *                next  5 blocks: 2 dmg each
-     *                remaining     : 1 dmg each
-     *   densityBonus = densityLevel * 0.5 * blocksfallen
-     *   totalDmg = (6 + fallBonus + densityBonus) * 1.5  [critical]
+     * Mace damage formula (Minecraft 1.21+):
+     *   fallBonus:
+     *     blocks 1–3  → 4 damage each  (12 total)
+     *     blocks 4–8  → 2 damage each  (10 total)
+     *     blocks 9+   → 1 damage each
+     *   densityBonus  = densityLevel * 0.5 * blocksFallen   (flat, not phased)
+     *   baseDamage    = 6
+     *   totalDamage   = (baseDamage + fallBonus + densityBonus) * 1.5  [critical]
      *
-     * We solve for height such that totalDmg >= targetMaxHp + 10.
-     * Density level is read from the mace in the player's hand / inventory.
+     * Rise target = target.getY() + requiredFallBlocks
+     * We add a 20% overhead buffer so armour/resistance doesn't save them.
      */
     private double computeRequiredRiseY() {
         float  hp      = target.getMaxHealth();
-        double needed  = hp + 10.0;
+        // 20% buffer over max HP to account for armour / resistance
+        double needed  = hp * 1.2 + 10.0;
         int    density = getMaceDensityLevel();
         double blocks  = blocksForDamage(needed, density);
-        // cap at 80 blocks, never less than 3
-        blocks = Math.max(3, Math.min(blocks, 80));
+        // Hard cap 80, floor 5 — never dive less than 5 blocks
+        blocks = Math.max(5, Math.min(blocks, 80));
+        // Rise to (target feet + fall distance needed); ceiling-scan from there
         return findReachableCeiling(target.getY() + blocks);
     }
 
+    /**
+     * Solves for the minimum integer fall distance (blocks) such that
+     * mace damage >= targetDmg, given density enchant level.
+     *
+     * Forward formula:
+     *   fallBonus(n) = min(n,3)*4 + min(max(n-3,0),5)*2 + max(n-8,0)*1
+     *   densityBonus(n) = density * 0.5 * n
+     *   dmg(n) = (6 + fallBonus(n) + densityBonus(n)) * 1.5
+     *
+     * We iterate n upward (fast, caps at 80) to find the exact crossing point.
+     * This avoids all the inversion arithmetic that was producing short heights.
+     */
     private double blocksForDamage(double targetDmg, int density) {
-        // Invert: targetDmg = (6 + fallBonus + densityBonus) * 1.5
-        double required = (targetDmg / 1.5) - 6.0;
-        if (required <= 0) return 2.0;
-
-        double densityPerBlock = density * 0.5;
-        double phase1 = 4.0 + densityPerBlock; // per block, first 3
-        double phase2 = 2.0 + densityPerBlock; // per block, next 5
-        double phase3 = 1.0 + densityPerBlock; // per block, rest
-
-        double accum = 0, blocks = 0;
-
-        for (int i = 0; i < 3 && accum < required; i++) { accum += phase1; blocks++; }
-        if (accum >= required) return blocks;
-
-        for (int i = 0; i < 5 && accum < required; i++) { accum += phase2; blocks++; }
-        if (accum >= required) return blocks;
-
-        double rem = required - accum;
-        blocks += Math.ceil(rem / phase3);
-        return blocks;
+        for (int n = 1; n <= 80; n++) {
+            double fallBonus    = Math.min(n, 3) * 4.0
+                                + Math.min(Math.max(n - 3, 0), 5) * 2.0
+                                + Math.max(n - 8, 0) * 1.0;
+            double densityBonus = density * 0.5 * n;
+            double dmg          = (6.0 + fallBonus + densityBonus) * 1.5;
+            if (dmg >= targetDmg) return n;
+        }
+        return 80; // fallback: maximum height
     }
 
     // ── ENCHANTMENT READER ────────────────────────────────────────────────────
