@@ -6,7 +6,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.ItemEnchantments;
+import net.minecraft.component.type.ItemEnchantmentsComponent;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
@@ -256,7 +256,7 @@ public class Automace extends Module {
         int level = getDensityFromStack(mainHand);
         if (level >= 0) return level;
 
-        for (ItemStack stack : mc.player.getInventory().items) {
+        for (int i = 0; i < mc.player.getInventory().size(); i++) {     ItemStack stack = mc.player.getInventory().getStack(i);
             level = getDensityFromStack(stack);
             if (level >= 0) return level;
         }
@@ -268,7 +268,7 @@ public class Automace extends Module {
         // Check if it's a mace by item id
         if (!stack.getItem().toString().contains("mace")) return -1;
 
-        ItemEnchantments enchantments = stack.get(DataComponents.ENCHANTMENTS);
+        ItemEnchantmentsComponent enchantments = stack.get(DataComponents.ENCHANTMENTS);
         if (enchantments == null) return 0;
 
         // Iterate all enchantments and find Density by registry key name
