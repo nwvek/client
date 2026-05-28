@@ -17,7 +17,7 @@ import java.util.List;
 public class Automace extends Module {
 
     private final Setting<Float>   speed       = num("Speed",        2.5f, 0.1f, 10f);
-    private final Setting<Integer> densityLevel = intSetting("Density", 5, 0, 5);
+    private final Setting<Float> densityLevel = num("Density", 5f, 0f, 5f);
     private final Setting<Boolean> autoDive    = bool("AutoDive",    true);
 
     // ── States ──────────────────────────────────────────────────────────────
@@ -215,7 +215,7 @@ public class Automace extends Module {
     private double computeRequiredRiseY() {
         float  hp      = target.getMaxHealth();
         double needed  = hp + 10.0;          // overkill buffer
-        int    density = densityLevel.getValue();
+        int    density = densityLevel.getValue().intValue();
 
         double blocks = blocksNeededForDamage(needed, density);
 
